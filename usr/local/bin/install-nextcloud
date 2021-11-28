@@ -1,0 +1,245 @@
+#!/bin/sh
+
+NEXTCLOUD_ROOT="/usr/local/nextcloud"
+NEXTCLOUD_ARCHIVE_FILE="/tmp/nextcloud/latest.tar.bz2"
+NEXTCLOUD_ARCHIVE_URL="https://download.nextcloud.com/server/releases/latest.tar.bz2"
+NEXTCLOUD_CHECKSUM_FILE="${NEXTCLOUD_ARCHIVE_FILE}.sha512"
+NEXTCLOUD_CHECKSUM_URL="${NEXTCLOUD_ARCHIVE_URL}.sha512"
+NEXTCLOUD_INSTALL_ROOT="${NEXTCLOUD_ROOT}/root"
+NEXTCLOUD_DATA_DIR="${NEXTCLOUD_ROOT}/data"
+NEXTCLOUD_BACKUP_DIR="${NEXTCLOUD_ROOT}/backups"
+NEXTCLOUD_DB_BACKUP_FILE="nextcloud-mysql-backup.sql"
+
+DB_NAME="nextcloud"
+DB_USER="nextcloud"
+DB_PASSWORD=""
+DB_HOST=""
+
+ADMIN_USERNAME=""
+ADMIN_PASSWORD=""
+
+PHP_USER="php-user"
+
+# TODO: argument handling
+
+echo_err() {
+    echo "$@" 1>&2
+}
+
+die() {
+    echo_err "$@"
+    exit 1
+}
+
+press_enter_to_continue() {
+    read -p "Press [Enter] to continue or ^C (Ctrl-C) to abort" unused
+}
+
+as_user() {
+    su -m "${PHP_USER}" -c "$@"
+}
+
+occ() {
+    (cd "${NEXTCLOUD_INSTALL_ROOT}"; as_user php ./occ $@)
+}
+
+download() {
+    # $1: source URL
+    # $2: destination
+    mkdir -p "$(dirname "$2")"
+    fetch --quiet --retry --output="$2" "$1"
+}
+
+download_latest() {
+    download "${NEXTCLOUD_CHECKSUM_URL}" "${NEXTCLOUD_CHECKSUM_FILE}"
+    local checksum="$(cut -f1 -d' ' "${NEXTCLOUD_CHECKSUM_FILE}")"
+
+    if test ! -f "${NEXTCLOUD_ARCHIVE_FILE}" || ! sha512 -q -c "${checksum}" "${NEXTCLOUD_ARCHIVE_FILE}"; then
+        download "${NEXTCLOUD_ARCHIVE_URL}" "${NEXTCLOUD_ARCHIVE_FILE}"
+        if ! sha512 -q -c "${checksum}" "${NEXTCLOUD_ARCHIVE_FILE}"; then
+            die "Could not validate archive ${NEXTCLOUD_ARCHIVE_FILE} using SHA512 checksum"
+        fi
+    fi
+}
+
+current_date() {
+    date +"%Y%m%d-%H%M%S"
+}
+
+backup_mysql() {
+    mysqldump --single-transaction  --default-character-set=utf8mb4 \
+        -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASSWORD}" > "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
+}
+
+backup() {
+    local backup_archive="${NEXTCLOUD_BACKUP_DIR}/nextcloud-backup-$(current_date).tar.xz"
+
+    if [ "$1" = "minimal" ]; then
+        as_user tar -c --auto-compress -f "${backup_archive}" --cd "${NEXTCLOUD_INSTALL_ROOT}" \
+            config themes "${NEXTCLOUD_DB_BACKUP_FILE}"
+    else
+        as_user tar -c --auto-compress -f "${backup_archive}" --cd "${NEXTCLOUD_INSTALL_ROOT}" .
+    fi
+
+    rm "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
+}
+
+restore() {
+    occ maintenance:mode --on
+
+    # TODO: calculate latest archive
+    local backup_archive="${NEXTCLOUD_BACKUP_DIR}/nextcloud-backup-$(current_date).tar.xz"
+
+    as_user tar -x -f "${backup_archive}" --cd "${NEXTCLOUD_INSTALL_ROOT}" .
+    
+    if [ -f "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}" ]; then
+        echo "Discovered database backup. Restoring..."
+        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASSWORD}" -e "DROP DATABASE ${DB_NAME}"
+        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASSWORD}" -e "CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
+        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" < "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
+        rm "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
+    fi
+
+    occ maintenance:data-fingerprint 
+    occ maintenance:mode --off
+}
+
+enable_cron() {
+    echo "=== Setting Up Cron ==="
+    echo "A text editor is going to open. Please ensure that a line exists with these contents:"
+    echo ""
+    echo "    */5  *  *  *  * php -f ${NEXTCLOUD_INSTALL_ROOT}/cron.php"
+    echo ""
+    echo "There must not be any leading whitespace or a comment marker (#)."
+    echo "There may also be other commented-out lines if you previously disabled Cron. You may"
+    echo "wish to uncomment them."
+    press_enter_to_continue
+    crontab -u $PHP_USER -e
+}
+
+disable_cron() {
+    echo "=== Disabling Cron ==="
+    echo "Nextcloud's Cron must be disabled before the current process can continue."
+    echo "A text editor will open. Please comment out all nextcloud-related lines with #"
+    press_enter_to_continue
+    crontab -u $PHP_USER -e
+}
+
+install_nextcloud_files() {
+    # This process should work regardless of clean installation or upgrade
+    # If upgrading, do `backup minimal` before AND `restore minimal` after
+    
+    # Download the latest Nextcloud archive and validate it
+    download_latest
+
+    if [ -e "${NEXTCLOUD_INSTALL_ROOT}" ]; then
+        echo "=== Deleting existing Nextcloud files ==="
+        echo "If you are UPGRADING (install-nextcloud upgrade), this script should have performed"
+        echo "an automatic backup of your configuration. This DOES NOT INCLUDE any third party"
+        echo "applications, due to the difficulty in telling the difference from a script."
+        echo ""
+        echo "If you are doing a CLEAN INSTALL (install-nextcloud install), NO AUTOMATIC BACKUP"
+        echo "was performed."
+        echo ""
+        press_enter_to_continue
+        rm -rf "${NEXTCLOUD_INSTALL_ROOT}"
+    fi
+
+    mkdir -p "${NEXTCLOUD_ROOT}"
+    chown -R "${PHP_USER}":"${PHP_USER}" "${NEXTCLOUD_ROOT}"
+
+    as_user tar -xjf "${NEXTCLOUD_ARCHIVE_FILE}" --cd "${NEXTCLOUD_ROOT}"
+
+    chown -R "${PHP_USER}":"${PHP_USER}" "${NEXTCLOUD_ROOT}"
+    find "${NEXTCLOUD_ROOT}" -type d -exec chmod 750 {} \;
+    find "${NEXTCLOUD_ROOT}" -type f -exec chmod 640 {} \;
+}
+
+#setup_db() {
+#    local password_text="$(test -n "${DB_PASSWORD}" && echo "REDACTED" || echo "UNSET")"
+#    echo "=== Setting Up the Database ==="
+#    echo "This script currently only supports MySQL/MariaDB. Please make sure a compatible database"
+#    echo "server is set up and running with the following values:"
+#    echo ""
+#    echo "    Host: ${DB_HOST}"
+#    echo "    User: ${DB_HOST}"
+#    echo "    Pass: ${password_text}"
+#    echo ""
+#    echo "This script will use the above connection details to create a database named \"${DB_NAME}\""
+#    press_enter_to_continue
+#
+#    db_cmd -e "CREATE DATABASE ${DB_NAME}"
+#    setup_db_four_byte
+#}
+
+setup_db_four_byte() {
+    run_commands=false
+    while true; do
+        if db_cmd -e "SHOW VARIABLES LIKE 'innodb_file_per_table'" | grep ON; then
+            if $run_commands; then
+                db_cmd -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
+                occ config:system:set mysql.utf8mb4 --type boolean --value="true"
+                occ maintenance:repair
+            fi
+            break
+        fi
+
+        run_commands=true
+        echo "=== Enabling 4-byte (Emoji) Support ==="
+        echo "Please ensure the following settings are set on the database server:"
+        echo ""
+        echo "    [mysqld]"
+        echo "    innodb_file_per_table=1"
+        echo ""
+        echo "Once you continue, a database operation will be performed. You may wish to restart"
+        echo "the database first to make sure the settings apply."
+        press_enter_to_continue
+    done
+
+}
+
+run_installation() {
+    occ maintenance:install --database "mysql" --database-host "${DB_HOST}" --database-name "${DB_NAME}" \
+        --database-user "${DB_USER}" --database-pass "${DB_PASSWORD}" --admin-user "${ADMIN_USERNAME}" \
+        --admin-pass "${ADMIN_PASSWORD}" --data-dir "${NEXTCLOUD_DATA_DIR}"
+}
+
+
+if [ "$operation" = "install" ]; then
+    install_nextcloud_files
+    enable_cron
+    run_installation
+    setup_db_four_byte
+elif [ "$operation" = "upgrade" ]; then
+    occ maintenance:mode --on
+    # In case things fail
+    backup all
+    # In case they succeed
+    backup minimal
+    # Disable Cron
+    disable_cron
+    # Install new files
+    install_nextcloud_files
+    # Restore config, etc.
+    restore minimal
+    # Run upgrade process
+    if ! occ upgrade; then
+        echo_err "Upgrade failed, attempting to restore backup..."
+        restore all
+        exit 1
+    fi
+    # Re-enabled Cron
+    enable_cron
+    # Run cleanup commands
+    occ maintenance:mode --off
+    occ db:add-missing-columns
+    occ db:add-missing-indices
+elif [ "$operation" = "backup" ]; then
+    occ maintenance:mode --on
+    backup $@
+    occ maintenance:mode --off
+elif [ "$operation" = "restore" ]; then
+    occ maintenance:mode --on
+    restore $@
+    occ maintenance:mode --off
+fi
