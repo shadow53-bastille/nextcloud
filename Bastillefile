@@ -9,6 +9,7 @@ PKG mariadb105-client
 
 # Install the install/update script
 CP usr .
+CMD chmod +x /usr/local/bin/install-nextcloud
 
 SYSRC php_fpm_enable=YES
 SERVICE php_fpm start
