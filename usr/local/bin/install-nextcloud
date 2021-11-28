@@ -12,7 +12,7 @@ NEXTCLOUD_DB_BACKUP_FILE="nextcloud-mysql-backup.sql"
 
 DB_NAME="nextcloud"
 DB_USER="nextcloud"
-DB_PASSWORD=""
+DB_PASS=""
 DB_HOST=""
 
 ADMIN_USERNAME=""
@@ -34,7 +34,7 @@ exit_help() {
     echo "  -h: Show this help message"
     echo "  -U: MySQL/MariaDB database username (Current: ${DB_USER})"
     echo "  -r: Nextcloud installation root directory (Current: ${NEXTCLOUD_ROOT})"
-    exit $1
+    exit "$1"
 }
 
 echo_err() {
@@ -47,16 +47,16 @@ while getopts d:hH:p:P:r:u:U: opt; do
         h) help ;;
         H) DB_HOST="${OPTARG}" ;;
         p) ADMIN_PASSWORD="${OPTARG}" ;;
-        P) DB_PASSWORD="${OPTARG}" ;;
+        P) DB_PASS="${OPTARG}" ;;
         r) NEXTCLOUD_ROOT="${OPTARG}" ;;
         u) ADMIN_USERNAME="${OPTARG}" ;;
         U) DB_USER="${OPTARG}" ;;
         ?) echo_err "Unexpected flag $opt"; exit_help ;;
     esac
 done
-shift $(($OPTIND - 1))
+shift $((OPTIND - 1))
 
-if [ -z "${DB_HOST}" ] || [ -z "${DB_PASSWORD}" ]; then
+if [ -z "${DB_HOST}" ] || [ -z "${DB_PASS}" ]; then
     echo_err "The -H and -P flags are required!"
     exit_help 1
 fi
@@ -67,7 +67,8 @@ die() {
 }
 
 press_enter_to_continue() {
-    read -p "Press [Enter] to continue or ^C (Ctrl-C) to abort" unused
+    echo "Press [Enter] to continue or ^C (Ctrl-C) to abort"
+    read -r
 }
 
 as_user() {
@@ -75,7 +76,10 @@ as_user() {
 }
 
 occ() {
-    (cd "${NEXTCLOUD_INSTALL_ROOT}"; as_user php ./occ $@)
+    oldwd="$(pwd)"
+    cd "${NEXTCLOUD_INSTALL_ROOT}" || die "Failed to cd to Nextcloud installation root"
+    as_user php ./occ "$@"
+    cd "${oldwd}" || die "Failed to cd to old wording directory"
 }
 
 download() {
@@ -90,7 +94,7 @@ download_latest() {
     if ! download "${NEXTCLOUD_CHECKSUM_URL}" "${NEXTCLOUD_CHECKSUM_FILE}"; then
         die "Failed to download checksum file"
     fi
-    local checksum="$(cut -f1 -d' ' "${NEXTCLOUD_CHECKSUM_FILE}")"
+    checksum="$(cut -f1 -d' ' "${NEXTCLOUD_CHECKSUM_FILE}")"
 
     if test ! -f "${NEXTCLOUD_ARCHIVE_FILE}" || ! sha512 -q -c "${checksum}" "${NEXTCLOUD_ARCHIVE_FILE}"; then
         echo "Downloading Nextcloud archive"
@@ -110,11 +114,11 @@ current_date() {
 backup_mysql() {
     echo "Dumping database to file"
     mysqldump --single-transaction  --default-character-set=utf8mb4 \
-        -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASSWORD}" > "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
+        -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASS}" > "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
 }
 
 backup() {
-    local backup_archive="${NEXTCLOUD_BACKUP_DIR}/nextcloud-backup-$(current_date).tar.xz"
+    backup_archive="${NEXTCLOUD_BACKUP_DIR}/nextcloud-backup-$(current_date).tar.xz"
 
     if [ "$1" = "minimal" ]; then
         as_user tar -c --auto-compress -f "${backup_archive}" --cd "${NEXTCLOUD_INSTALL_ROOT}" \
@@ -130,15 +134,15 @@ restore() {
     occ maintenance:mode --on
 
     # TODO: calculate latest archive
-    local backup_archive="${NEXTCLOUD_BACKUP_DIR}/nextcloud-backup-$(current_date).tar.xz"
+    backup_archive="${NEXTCLOUD_BACKUP_DIR}/nextcloud-backup-$(current_date).tar.xz"
 
     as_user tar -x -f "${backup_archive}" --cd "${NEXTCLOUD_INSTALL_ROOT}" .
     
     if [ -f "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}" ]; then
         echo "Discovered database backup. Restoring..."
-        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASSWORD}" -e "DROP DATABASE ${DB_NAME}"
-        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASSWORD}" -e "CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
-        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASSWORD}" "${DB_NAME}" < "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
+        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASS}" -e "DROP DATABASE ${DB_NAME}"
+        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASS}" -e "CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
+        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" < "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
         rm "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
     fi
 
@@ -203,7 +207,7 @@ install_nextcloud_files() {
 }
 
 #setup_db() {
-#    local password_text="$(test -n "${DB_PASSWORD}" && echo "REDACTED" || echo "UNSET")"
+#    password_text="$(test -n "${DB_PASS}" && echo "REDACTED" || echo "UNSET")"
 #    echo "=== Setting Up the Database ==="
 #    echo "This script currently only supports MySQL/MariaDB. Please make sure a compatible database"
 #    echo "server is set up and running with the following values:"
@@ -254,10 +258,13 @@ setup_db_four_byte() {
 run_installation() {
     echo "Running Nextcloud installation"
     occ maintenance:install --database "mysql" --database-host "${DB_HOST}" --database-name "${DB_NAME}" \
-        --database-user "${DB_USER}" --database-pass "${DB_PASSWORD}" --admin-user "${ADMIN_USERNAME}" \
+        --database-user "${DB_USER}" --database-pass "${DB_PASS}" --admin-user "${ADMIN_USERNAME}" \
         --admin-pass "${ADMIN_PASSWORD}" --data-dir "${NEXTCLOUD_DATA_DIR}"
 }
 
+
+operation="${1}"
+shift 1
 
 if [ "$operation" = "install" ]; then
     if [ -z "${ADMIN_USERNAME}" ] || [ -z "${ADMIN_PASSWORD}" ]; then
@@ -295,10 +302,12 @@ elif [ "$operation" = "upgrade" ]; then
     occ db:add-missing-indices
 elif [ "$operation" = "backup" ]; then
     occ maintenance:mode --on
-    backup $@
+    backup "$@"
     occ maintenance:mode --off
 elif [ "$operation" = "restore" ]; then
     occ maintenance:mode --on
-    restore $@
+    restore "$@"
     occ maintenance:mode --off
+else
+    die "Unknown operation: $operation"
 fi
