@@ -23,6 +23,14 @@ PHP_USER="www"
 exit_help() {
     echo "install-nextcloud: Helper script for installing and updating Nextcloud"
     echo ""
+    echo "USAGE: install-nextcloud [FLAGS] [COMMAND]"
+    echo ""
+    echo "COMMANDS"
+    echo "  install: Perform a clean installation of Nextcloud"
+    echo "  upgrade: Perform an upgrade to the latest version of Nextcloud"
+    echo "  backup [target]: Create a new backup of everything (target = all) or just customizations (target = minimal)"
+    echo "  restore [target]: Restore the most recent backup of the given target type"
+    echo ""
     echo "REQUIRED FLAGS:"
     echo "  -u: Username of Nextcloud admin user"
     echo "  -p: Password of Nextcloud admin user -- must not contain spaces or shell special characters"
@@ -72,6 +80,7 @@ press_enter_to_continue() {
 }
 
 as_user() {
+    echo "Running command as user ${PHP_USER}: $@"
     su -m "${PHP_USER}" -c "$@"
 }
 
@@ -195,7 +204,7 @@ install_nextcloud_files() {
     chown -R "${PHP_USER}":"${PHP_USER}" "${NEXTCLOUD_ROOT}"
 
     echo "Extracting new Nextcloud files..."
-    if ! as_user tar -xjf "${NEXTCLOUD_ARCHIVE_FILE}" --cd "${NEXTCLOUD_ROOT}"; then
+    if ! as_user tar -x -f "${NEXTCLOUD_ARCHIVE_FILE}" --cd "${NEXTCLOUD_ROOT}"; then
         die "Failed to extract Nextcloud files"
     fi
     echo "Extracted"
