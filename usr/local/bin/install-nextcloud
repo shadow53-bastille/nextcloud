@@ -149,9 +149,9 @@ restore() {
     
     if [ -f "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}" ]; then
         echo "Discovered database backup. Restoring..."
-        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASS}" -e "DROP DATABASE ${DB_NAME}"
-        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASS}" -e "CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
-        mysql -h "${DB_SERVER}" -u "${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" < "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
+        db_cmd -e "DROP DATABASE ${DB_NAME}"
+        db_cmd -e "CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"
+        db_cmd "${DB_NAME}" < "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
         rm "${NEXTCLOUD_INSTALL_ROOT}/${NEXTCLOUD_DB_BACKUP_FILE}"
     fi
 
@@ -200,7 +200,7 @@ install_nextcloud_files() {
         rm -rf "${NEXTCLOUD_INSTALL_ROOT}"
     fi
 
-    mkdir -p "${NEXTCLOUD_ROOT}"
+    mkdir -p "${NEXTCLOUD_ROOT}" "${NEXTCLOUD_DATA_DIR}"
     chown -R "${PHP_USER}":"${PHP_USER}" "${NEXTCLOUD_ROOT}"
 
     echo "Extracting new Nextcloud files..."
@@ -208,6 +208,7 @@ install_nextcloud_files() {
         die "Failed to extract Nextcloud files"
     fi
     echo "Extracted"
+    mv "${NEXTCLOUD_ROOT}/nextcloud" "${NEXTCLOUD_INSTALL_ROOT}"
 
     echo "Setting permissions on installed files"
     chown -R "${PHP_USER}":"${PHP_USER}" "${NEXTCLOUD_ROOT}"
@@ -215,53 +216,35 @@ install_nextcloud_files() {
     find "${NEXTCLOUD_ROOT}" -type f -exec chmod 640 {} \;
 }
 
-#setup_db() {
-#    password_text="$(test -n "${DB_PASS}" && echo "REDACTED" || echo "UNSET")"
-#    echo "=== Setting Up the Database ==="
-#    echo "This script currently only supports MySQL/MariaDB. Please make sure a compatible database"
-#    echo "server is set up and running with the following values:"
-#    echo ""
-#    echo "    Host: ${DB_HOST}"
-#    echo "    User: ${DB_HOST}"
-#    echo "    Pass: ${password_text}"
-#    echo ""
-#    echo "This script will use the above connection details to create a database named \"${DB_NAME}\""
-#    press_enter_to_continue
-#
-#    db_cmd -e "CREATE DATABASE ${DB_NAME}"
-#    setup_db_four_byte
-#}
+setup_db() {
+    local_ip="$(ifconfig bastille0 | grep inet | cut -w -f3)"
+    echo "=== Setting Up the Database ==="
+    echo "This script currently only supports MySQL/MariaDB. Please make sure a compatible database"
+    echo "server is set up and running. Authenticate as the root user and run the following commands:"
+    echo ""
+    echo "    CREATE DATABASE IF NOT EXISTS nextcloud CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+    echo "    CREATE USER '${DB_USER}'@'${local_ip}' IDENTIFIED BY '${DB_PASS}';"
+    echo "    GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'${local_ip}';"
+    echo "    FLUSH PRIVILEGES;"
+    echo ""
+    echo "Also verify the following is set in the database's my.cnf:"
+    echo ""
+    echo "    [mysqld]"
+    echo "    ..."
+    echo "    transaction_isolation = READ-COMMITTED"
+    echo "    binlog_format = ROW"
+    echo "    innodb_file_per_table=1"
+    echo "    ..."
+    echo ""
+    press_enter_to_continue
 
-setup_db_four_byte() {
-    run_commands=false
-    while true; do
-        if db_cmd -e "SHOW VARIABLES LIKE 'innodb_file_per_table'" | grep ON; then
-            if $run_commands; then
-                if ! db_cmd -e "ALTER DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"; then
-                    die "Failed to set database to UTF-8 4-bytes"
-                fi
-                if ! occ config:system:set mysql.utf8mb4 --type boolean --value="true"; then
-                    die "Failed to enable UTF-8 4-bytes in Nextcloud"
-                fi
-                if ! occ maintenance:repair; then
-                    die "Failed to repair the installation after enabling UTF-8 4-bytes"
-                fi
-            fi
-            break
-        fi
+    if ! occ config:system:set mysql.utf8mb4 --type boolean --value="true"; then
+        die "Failed to enable UTF-8 4-bytes in Nextcloud"
+    fi
+}
 
-        run_commands=true
-        echo "=== Enabling 4-byte (Emoji) Support ==="
-        echo "Please ensure the following settings are set on the database server:"
-        echo ""
-        echo "    [mysqld]"
-        echo "    innodb_file_per_table=1"
-        echo ""
-        echo "Once you continue, a database operation will be performed. You may wish to restart"
-        echo "the database first to make sure the settings apply."
-        press_enter_to_continue
-    done
-
+db_cmd() {
+    mysql -h "${DB_HOST}" -u "${DB_USER}" -p"${DB_PASS}" "$@"
 }
 
 run_installation() {
@@ -283,8 +266,8 @@ if [ "$operation" = "install" ]; then
 
     install_nextcloud_files
     enable_cron
+    setup_db
     run_installation
-    setup_db_four_byte
 elif [ "$operation" = "upgrade" ]; then
     occ maintenance:mode --on
     # In case things fail
