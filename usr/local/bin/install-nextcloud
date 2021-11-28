@@ -20,26 +20,6 @@ ADMIN_PASSWORD=""
 
 PHP_USER="www"
 
-while getopts d:hH:p:P:r:u:U: opt; do
-    case $opt in
-        d) DB_NAME="${OPTARG}" ;;
-        h) help ;;
-        H) DB_HOST="${OPTARG}" ;;
-        p) ADMIN_PASSWORD="${OPTARG}" ;;
-        P) DB_PASS="${OPTARG}" ;;
-        r) NEXTCLOUD_ROOT="${OPTARG}" ;;
-        u) ADMIN_USERNAME="${OPTARG}" ;;
-        U) DB_USER="${OPTARG}" ;;
-        ?) echo_err "Unexpected flag $opt"; exit_help ;;
-    esac
-done
-shift $(($OPTIND - 1))
-
-if [ -z "${DB_HOST}" ] || [ -z "${DB_PASSWORD}" ]; then
-    echo_err "The -H and -P flags are required!"
-    exit_help 1
-fi
-
 exit_help() {
     echo "install-nextcloud: Helper script for installing and updating Nextcloud"
     echo ""
@@ -60,6 +40,26 @@ exit_help() {
 echo_err() {
     echo "$@" 1>&2
 }
+
+while getopts d:hH:p:P:r:u:U: opt; do
+    case $opt in
+        d) DB_NAME="${OPTARG}" ;;
+        h) help ;;
+        H) DB_HOST="${OPTARG}" ;;
+        p) ADMIN_PASSWORD="${OPTARG}" ;;
+        P) DB_PASS="${OPTARG}" ;;
+        r) NEXTCLOUD_ROOT="${OPTARG}" ;;
+        u) ADMIN_USERNAME="${OPTARG}" ;;
+        U) DB_USER="${OPTARG}" ;;
+        ?) echo_err "Unexpected flag $opt"; exit_help ;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+if [ -z "${DB_HOST}" ] || [ -z "${DB_PASSWORD}" ]; then
+    echo_err "The -H and -P flags are required!"
+    exit_help 1
+fi
 
 die() {
     echo_err "$@"
