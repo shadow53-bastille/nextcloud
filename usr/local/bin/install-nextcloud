@@ -18,9 +18,44 @@ DB_HOST=""
 ADMIN_USERNAME=""
 ADMIN_PASSWORD=""
 
-PHP_USER="php-user"
+PHP_USER="www"
 
-# TODO: argument handling
+while getopts d:hH:p:P:r:u:U: opt; do
+    case $opt in
+        d) DB_NAME="${OPTARG}" ;;
+        h) help ;;
+        H) DB_HOST="${OPTARG}" ;;
+        p) ADMIN_PASSWORD="${OPTARG}" ;;
+        P) DB_PASS="${OPTARG}" ;;
+        r) NEXTCLOUD_ROOT="${OPTARG}" ;;
+        u) ADMIN_USERNAME="${OPTARG}" ;;
+        U) DB_USER="${OPTARG}" ;;
+        ?) echo_err "Unexpected flag $opt"; exit_help ;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+if [ -z "${DB_HOST}" ] || [ -z "${DB_PASSWORD}" ]; then
+    echo_err "The -H and -P flags are required!"
+    exit_help 1
+fi
+
+exit_help() {
+    echo "install-nextcloud: Helper script for installing and updating Nextcloud"
+    echo ""
+    echo "REQUIRED FLAGS:"
+    echo "  -u: Username of Nextcloud admin user"
+    echo "  -p: Password of Nextcloud admin user -- must not contain spaces or shell special characters"
+    echo "  -H: MySQL/MariaDB database host"
+    echo "  -P: MySQL/MariaDB database password -- must not contain spaces or shell special characters"
+    echo ""
+    echo "OPTIONAL FLAGS:"
+    echo "  -d: MySQL/MariaDB database name for Nextcloud (Current: ${DB_NAME})"
+    echo "  -h: Show this help message"
+    echo "  -U: MySQL/MariaDB database username (Current: ${DB_USER})"
+    echo "  -r: Nextcloud installation root directory (Current: ${NEXTCLOUD_ROOT})"
+    exit $1
+}
 
 echo_err() {
     echo "$@" 1>&2
@@ -206,6 +241,11 @@ run_installation() {
 
 
 if [ "$operation" = "install" ]; then
+    if [ -z "${ADMIN_USERNAME}" ] || [ -z "${ADMIN_PASSWORD}" ]; then
+        echo_err "Flags -u and -p are required!"
+        exit_help 1
+    fi
+
     install_nextcloud_files
     enable_cron
     run_installation

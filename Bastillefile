@@ -13,8 +13,7 @@ CP usr .
 # Mount nextcloud install dir so nginx can access files
 MOUNT /usr/local/nextcloud usr/local/nextcloud/root nullfs rw 0 0
 
-# Install nextcloud from archive
-CMD /usr/local/bin/install-nextcloud install
-
 SYSRC php_fpm_enable=YES
 SERVICE php_fpm start
+
+CMD echo "Install Nextcloud with the /usr/local/bin/install-nextcloud script"
