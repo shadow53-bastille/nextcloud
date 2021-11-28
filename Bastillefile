@@ -8,7 +8,7 @@ PKG php80-intl php80-ldap php80-pdo_mysql php80-opcache php80-openssl php80-smbc
 PKG mariadb105-client
 
 # Install the install/update script
-CP usr
+CP usr .
 
 # Mount nextcloud install dir so nginx can access files
 MOUNT /usr/local/nextcloud usr/local/nextcloud/root nullfs rw 0 0
