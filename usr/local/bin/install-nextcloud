@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 NEXTCLOUD_ROOT="/usr/local/nextcloud"
 NEXTCLOUD_ARCHIVE_FILE="/tmp/nextcloud/latest.tar.bz2"
@@ -80,8 +80,8 @@ press_enter_to_continue() {
 }
 
 as_user() {
-    echo "Running command as user ${PHP_USER}: $@"
-    su -m "${PHP_USER}" -c "$@"
+    echo "Running command as user ${PHP_USER}: $*"
+    sudo -u "${PHP_USER}" -- "$@"
 }
 
 occ() {
