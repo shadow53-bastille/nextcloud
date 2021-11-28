@@ -7,6 +7,8 @@ CP usr .
 CMD chmod +x /usr/local/bin/install-nextcloud
 
 SYSRC php_fpm_enable=YES
-SERVICE php_fpm start
+SERVICE php-fpm start
+
+CMD sed -i '' -E -e 's|;?php_admin_value\[memory_limit\] = [0-9]+[KMG]|php_admin_value[memory_limit] = 512M|' /usr/local/etc/php-fpm.d/www.conf
 
 CMD echo "Install Nextcloud with the /usr/local/bin/install-nextcloud script"
